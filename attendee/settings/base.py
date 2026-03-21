@@ -274,9 +274,11 @@ else:
     DEFAULT_STORAGE_BACKEND = {
         "BACKEND": "storages.backends.s3.S3Storage",
         "OPTIONS": {
-            "endpoint_url": os.getenv("AWS_ENDPOINT_URL"),
+            "endpoint_url": os.getenv("AWS_S3_ENDPOINT_URL") or os.getenv("AWS_ENDPOINT_URL"),
             "access_key": os.getenv("AWS_ACCESS_KEY_ID"),
             "secret_key": os.getenv("AWS_SECRET_ACCESS_KEY"),
+            "custom_domain": os.getenv("AWS_S3_CUSTOM_DOMAIN"),
+            "querystring_auth": False,
         },
     }
     # Deep copy the DEFAULT_STORAGE_BACKEND
@@ -297,6 +299,10 @@ STORAGES = {
     },
 }
 AWS_S3_SIGNATURE_VERSION = "s3v4"
+AWS_S3_ADDRESSING_STYLE = "path"
+AWS_S3_SECURE_URLS = os.getenv("AWS_S3_SECURE_URLS", "true").lower() == "true"
+AWS_S3_URL_PROTOCOL = 'https:' if AWS_S3_SECURE_URLS else 'http:'
+AWS_QUERYSTRING_AUTH = False
 if os.getenv("USE_IRSA_FOR_S3_STORAGE", "false") == "true":
     AWS_S3_ADDRESSING_STYLE = "virtual"
 

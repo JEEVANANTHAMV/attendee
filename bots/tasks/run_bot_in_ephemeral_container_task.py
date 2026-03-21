@@ -108,6 +108,8 @@ def run_bot_in_ephemeral_container(self, bot_id: int):
         volumes = {host_code_path: {"bind": "/attendee", "mode": "rw"}}
 
         # Launch ephemeral container
+        env_vars["HOME"] = "/home/app"
+        env_vars.pop("USER", None)
         container = client.containers.run(
             image=image,
             command=command,
@@ -120,7 +122,8 @@ def run_bot_in_ephemeral_container(self, bot_id: int):
             mem_limit=mem_limit,
             cpu_quota=cpu_quota,
             cpu_period=cpu_period,
-            network_mode="host",  # Same network mode as workers
+            network_mode=os.getenv("BOT_CONTAINER_NETWORK", "host"),  # Same network mode as workers
+            extra_hosts={"meet.innosynth.org": "host-gateway"},
             security_opt=["seccomp=unconfined"],  # Same config as workers
             # Container will automatically stop after max_execution_seconds thanks to timeout in command
         )
