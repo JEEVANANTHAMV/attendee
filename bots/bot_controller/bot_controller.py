@@ -21,7 +21,7 @@ from bots.bot_controller.bot_websocket_client_manager import BotWebsocketClientM
 from bots.bot_sso_utils import create_google_meet_sign_in_session
 from bots.bots_api_utils import BotCreationSource
 from bots.external_callback_utils import get_zoom_tokens
-from bots.meeting_url_utils import meeting_type_from_url
+from bots.meeting_url_utils import meeting_type_from_url, parse_zoom_registrant_token
 from bots.models import (
     AudioChunk,
     Bot,
@@ -270,6 +270,11 @@ class BotController:
         else:
             zoom_tokens = get_zoom_tokens_via_zoom_oauth_app(self.bot_in_db)
 
+        # Add registrant token if it exists, for meetings or webinars that require registration
+        registrant_token = parse_zoom_registrant_token(self.bot_in_db.meeting_url)
+        if registrant_token:
+            zoom_tokens["registrant_token"] = registrant_token
+
         return zoom_tokens
 
     def get_zoom_oauth_credentials_and_tokens(self):
@@ -303,6 +308,7 @@ class BotController:
             should_ask_for_recording_permission=self.pipeline_configuration.record_audio or self.pipeline_configuration.rtmp_stream_audio or self.pipeline_configuration.websocket_stream_audio or self.pipeline_configuration.record_video or self.pipeline_configuration.rtmp_stream_video,
             record_chat_messages_when_paused=self.bot_in_db.record_chat_messages_when_paused(),
             disable_incoming_video=self.disable_incoming_video_for_web_bots(),
+            modify_dom_for_video_recording=self.should_modify_dom_for_video_recording_for_web_bots(),
             record_participant_speech_start_stop_events=self.bot_in_db.record_participant_speech_start_stop_events(),
             zoom_tokens=zoom_tokens,
         )
@@ -389,8 +395,6 @@ class BotController:
     def get_per_participant_audio_utterance_delay_ms(self):
         meeting_type = self.get_meeting_type()
         if meeting_type == MeetingTypes.TEAMS:
-            return 2000
-        if meeting_type == MeetingTypes.ZOOM and self.bot_in_db.use_zoom_web_adapter():
             return 2000
         return 0
 
@@ -1867,6 +1871,17 @@ class BotController:
             self.cleanup()
             return
 
+        if message.get("message") == BotAdapter.Messages.ZOOM_MEETING_STATUS_FAILED_APP_CAN_NOT_ANONYMOUS_JOIN_MEETING:
+            logger.info(f"Received message that meeting status failed app can not anonymous join meeting with zoom_result_code={message.get('zoom_result_code')}")
+            BotEventManager.create_event(
+                bot=self.bot_in_db,
+                event_type=BotEventTypes.COULD_NOT_JOIN,
+                event_sub_type=BotEventSubTypes.COULD_NOT_JOIN_MEETING_ZOOM_APP_CANNOT_JOIN_ANONYMOUSLY,
+                event_metadata={"zoom_result_code": str(message.get("zoom_result_code"))},
+            )
+            self.cleanup()
+            return
+
         if message.get("message") == BotAdapter.Messages.ZOOM_MEETING_STATUS_FAILED:
             logger.info(f"Received message that meeting status failed with zoom_result_code={message.get('zoom_result_code')}")
             BotEventManager.create_event(
@@ -1976,6 +1991,8 @@ class BotController:
                 event_sub_type_for_permission_denied = BotEventSubTypes.BOT_RECORDING_PERMISSION_DENIED_REQUEST_TIMED_OUT
             elif message.get("denied_reason") == BotAdapter.BOT_RECORDING_PERMISSION_DENIED_REASON.HOST_CLIENT_CANNOT_GRANT_PERMISSION:
                 event_sub_type_for_permission_denied = BotEventSubTypes.BOT_RECORDING_PERMISSION_DENIED_HOST_CLIENT_CANNOT_GRANT_PERMISSION
+            elif message.get("denied_reason") == BotAdapter.BOT_RECORDING_PERMISSION_DENIED_REASON.WEBINAR_ATTENDEE_NEEDS_PANELIST_PROMOTION:
+                event_sub_type_for_permission_denied = BotEventSubTypes.BOT_RECORDING_PERMISSION_DENIED_WEBINAR_ATTENDEE_NEEDS_PANELIST_PROMOTION
             else:
                 raise Exception(f"Received unexpected denied reason from bot adapter: {message.get('denied_reason')}")
 
@@ -2009,6 +2026,11 @@ class BotController:
         if message.get("message") == BotAdapter.Messages.COULD_NOT_ENABLE_CLOSED_CAPTIONS:
             logger.info("Received message that bot could not enable closed captions")
             BotLogManager.create_bot_log_entry(bot=self.bot_in_db, level=BotLogEntryLevels.WARNING, entry_type=BotLogEntryTypes.COULD_NOT_ENABLE_CLOSED_CAPTIONS, message="Bot could not enable closed captions")
+            return
+
+        if message.get("message") == BotAdapter.Messages.WEBINAR_BOT_PROMOTED_TO_PANELIST:
+            logger.info("Received message that webinar bot was promoted to panelist")
+            BotLogManager.create_bot_log_entry(bot=self.bot_in_db, level=BotLogEntryLevels.INFO, entry_type=BotLogEntryTypes.WEBINAR_PANELIST_PROMOTION, message="Bot was promoted to panelist in webinar")
             return
 
         raise Exception(f"Received unexpected message from bot adapter: {message}")
